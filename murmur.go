@@ -23,13 +23,13 @@ const (
 )
 
 // hash computes the 32-bit Murmur3 hash of s using ms as the seed.
-func (ms murmurSeed) hash(s string) uint32 {
+func (ms murmurSeed) hash(s []byte) uint32 {
 	h := uint32(ms)
 	l := len(s)
 	numBlocks := l / 4
 	var blocks []uint32
 	header := (*reflect.SliceHeader)(unsafe.Pointer(&blocks))
-	header.Data = (*reflect.StringHeader)(unsafe.Pointer(&s)).Data
+	header.Data = (*reflect.SliceHeader)(unsafe.Pointer(&s)).Data
 	header.Len = numBlocks
 	header.Cap = numBlocks
 	for _, k := range blocks {

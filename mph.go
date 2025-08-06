@@ -1,12 +1,15 @@
 // Package mph implements a minimal perfect hash table over strings.
 package mph
 
-import "sort"
+import (
+	"bytes"
+	"sort"
+)
 
 // A Table is an immutable hash table that provides constant-time lookups of key
 // indices using a minimal perfect hash.
 type Table struct {
-	keys       []string
+	keys       [][]byte
 	level0     []uint32 // power of 2 size
 	level0Mask int      // len(Level0) - 1
 	level1     []uint32 // power of 2 size >= len(keys)
@@ -15,7 +18,7 @@ type Table struct {
 
 // Build builds a Table from keys using the "Hash, displace, and compress"
 // algorithm described in http://cmph.sourceforge.net/papers/esa09.pdf.
-func Build(keys []string) *Table {
+func Build(keys [][]byte) *Table {
 	var (
 		level0        = make([]uint32, nextPow2(len(keys)/4))
 		level0Mask    = len(level0) - 1
@@ -76,12 +79,12 @@ func nextPow2(n int) int {
 }
 
 // Lookup searches for s in t and returns its index and whether it was found.
-func (t *Table) Lookup(s string) (n uint32, ok bool) {
+func (t *Table) Lookup(s []byte) (n uint32, ok bool) {
 	i0 := int(murmurSeed(0).hash(s)) & t.level0Mask
 	seed := t.level0[i0]
 	i1 := int(murmurSeed(seed).hash(s)) & t.level1Mask
 	n = t.level1[i1]
-	return n, s == t.keys[int(n)]
+	return n, bytes.Equal(s, t.keys[int(n)])
 }
 
 type indexBucket struct {

@@ -33,24 +33,28 @@ var murmurTestCases = []struct {
 
 func TestMurmur(t *testing.T) {
 	for _, tt := range murmurTestCases {
-		got := tt.seed.hash(tt.input)
+		got := tt.seed.hash([]byte(tt.input))
 		if got != tt.want {
-			t.Errorf("hash(%q, seed=0x%x): got 0x%x; want %x",
-				tt.input, tt.seed, got, tt.want)
+			t.Errorf(
+				"hash(%q, seed=0x%x): got 0x%x; want %x",
+				tt.input, tt.seed, got, tt.want,
+			)
 		}
 	}
 }
 
 func BenchmarkMurmur(b *testing.B) {
 	for _, size := range []int{1, 4, 8, 16, 32, 50, 500} {
-		b.Run(fmt.Sprint(size), func(b *testing.B) {
-			s := strings.Repeat("a", size)
-			b.SetBytes(int64(size))
-			var seed murmurSeed
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				seed.hash(s)
-			}
-		})
+		b.Run(
+			fmt.Sprint(size), func(b *testing.B) {
+				s := strings.Repeat("a", size)
+				b.SetBytes(int64(size))
+				var seed murmurSeed
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					seed.hash([]byte(s))
+				}
+			},
+		)
 	}
 }

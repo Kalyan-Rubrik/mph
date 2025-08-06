@@ -26,9 +26,13 @@ func TestBuild_stress(t *testing.T) {
 }
 
 func testTable(t *testing.T, keys []string, extra []string) {
-	table := Build(keys)
+	ks := make([][]byte, len(keys))
 	for i, key := range keys {
-		n, ok := table.Lookup(key)
+		ks[i] = []byte(key)
+	}
+	table := Build(ks)
+	for i, key := range keys {
+		n, ok := table.Lookup([]byte(key))
 		if !ok {
 			t.Errorf("Lookup(%s): got !ok; want ok", key)
 			continue
@@ -38,14 +42,14 @@ func testTable(t *testing.T, keys []string, extra []string) {
 		}
 	}
 	for _, key := range extra {
-		if _, ok := table.Lookup(key); ok {
+		if _, ok := table.Lookup([]byte(key)); ok {
 			t.Errorf("Lookup(%s): got ok; want !ok", key)
 		}
 	}
 }
 
 var (
-	words      []string
+	words      [][]byte
 	wordsOnce  sync.Once
 	benchTable *Table
 )
@@ -86,12 +90,12 @@ func BenchmarkTableMap(b *testing.B) {
 	}
 	m := make(map[string]uint32)
 	for i, word := range words {
-		m[word] = uint32(i)
+		m[string(word)] = uint32(i)
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		j := i % len(words)
-		n, ok := m[words[j]]
+		n, ok := m[string(words[j])]
 		if !ok {
 			b.Fatal("missing key")
 		}
@@ -114,16 +118,16 @@ func loadBenchTable() {
 	}
 }
 
-func loadDict(dict string) ([]string, error) {
+func loadDict(dict string) ([][]byte, error) {
 	f, err := os.Open(dict)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
 	scanner := bufio.NewScanner(f)
-	var words []string
+	var words [][]byte
 	for scanner.Scan() {
-		words = append(words, scanner.Text())
+		words = append(words, scanner.Bytes())
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
