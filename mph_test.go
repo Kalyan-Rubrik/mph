@@ -2,6 +2,7 @@ package mph
 
 import (
 	"bufio"
+	"crypto/sha1"
 	"os"
 	"strconv"
 	"sync"
@@ -23,6 +24,43 @@ func TestBuild_stress(t *testing.T) {
 		}
 	}
 	testTable(t, keys, extra)
+}
+
+func TestBuild(t *testing.T) {
+	keys := make([][]byte, 10_000_000)
+	hasher := sha1.New()
+	for i := range keys {
+		hasher.Write([]byte("key" + strconv.Itoa(i)))
+		keys[i] = hasher.Sum(nil)
+	}
+	str := "hello"
+
+	tbl := Build(keys)
+	if _, ok := tbl.Lookup([]byte(str)); ok {
+		t.Errorf("Lookup(%s): got ok; want !ok", str)
+	}
+
+	for i := range keys {
+		if _, ok := tbl.Lookup(keys[i]); !ok {
+			t.Errorf("Lookup(%s): got !ok; want ok", string(keys[i]))
+		}
+	}
+
+	dumpFilePath := "/tmp/test.mph"
+	if err := tbl.DumpToFile(dumpFilePath); err != nil {
+		t.Fatal(err)
+	}
+
+	tbl, err := LoadFromFile(dumpFilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for i := range keys {
+		if _, ok := tbl.Lookup(keys[i]); !ok {
+			t.Errorf("Lookup(%s): got !ok; want ok", string(keys[i]))
+		}
+	}
 }
 
 func testTable(t *testing.T, keys []string, extra []string) {

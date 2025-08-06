@@ -3,6 +3,8 @@ package mph
 
 import (
 	"bytes"
+	"encoding/gob"
+	"os"
 	"sort"
 )
 
@@ -85,6 +87,60 @@ func (t *Table) Lookup(s []byte) (n uint32, ok bool) {
 	i1 := int(murmurSeed(seed).hash(s)) & t.level1Mask
 	n = t.level1[i1]
 	return n, bytes.Equal(s, t.keys[int(n)])
+}
+
+func (t *Table) DumpToFile(filePath string) error {
+	dumpFile, err := os.OpenFile(
+		filePath,
+		os.O_WRONLY|os.O_CREATE|os.O_TRUNC,
+		0644,
+	)
+	if err != nil {
+		return err
+	}
+	encoder := gob.NewEncoder(dumpFile)
+	if err = encoder.Encode(t.keys); err != nil {
+		return err
+	}
+	if err = encoder.Encode(t.level0); err != nil {
+		return err
+	}
+	if err = encoder.Encode(t.level0Mask); err != nil {
+		return err
+	}
+	if err = encoder.Encode(t.level1); err != nil {
+		return err
+	}
+	if err = encoder.Encode(t.level1Mask); err != nil {
+		return err
+	}
+	return dumpFile.Close()
+}
+
+func LoadFromFile(filePath string) (*Table, error) {
+	dumpFile, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer dumpFile.Close()
+	gobDecoder := gob.NewDecoder(dumpFile)
+	var t Table
+	if err = gobDecoder.Decode(&t.keys); err != nil {
+		return nil, err
+	}
+	if err = gobDecoder.Decode(&t.level0); err != nil {
+		return nil, err
+	}
+	if err = gobDecoder.Decode(&t.level0Mask); err != nil {
+		return nil, err
+	}
+	if err = gobDecoder.Decode(&t.level1); err != nil {
+		return nil, err
+	}
+	if err = gobDecoder.Decode(&t.level1Mask); err != nil {
+		return nil, err
+	}
+	return &t, nil
 }
 
 type indexBucket struct {
