@@ -13,6 +13,18 @@ func TestBuild_simple(t *testing.T) {
 	testTable(t, []string{"foo", "foo2", "bar", "baz"}, []string{"quux"})
 }
 
+func TestBuild_dup(t *testing.T) {
+	// Test that duplicate keys are detected and return an error
+	ks := make([][]byte, 2)
+	ks[0] = []byte("foo")
+	ks[1] = []byte("foo")
+
+	_, err := Build(ks)
+	if err == nil {
+		t.Error("Build with duplicate keys: got nil error; want error")
+	}
+}
+
 func TestBuild_stress(t *testing.T) {
 	var keys, extra []string
 	for i := 0; i < 20000; i++ {
@@ -35,7 +47,10 @@ func TestBuild(t *testing.T) {
 	}
 	str := "hello"
 
-	tbl := Build(keys)
+	tbl, err := Build(keys)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, ok := tbl.Lookup([]byte(str)); ok {
 		t.Errorf("Lookup(%s): got ok; want !ok", str)
 	}
@@ -51,7 +66,7 @@ func TestBuild(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tbl, err := LoadFromFile(dumpFilePath)
+	tbl, err = LoadFromFile(dumpFilePath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +83,10 @@ func testTable(t *testing.T, keys []string, extra []string) {
 	for i, key := range keys {
 		ks[i] = []byte(key)
 	}
-	table := Build(ks)
+	table, err := Build(ks)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for i, key := range keys {
 		n, ok := table.Lookup([]byte(key))
 		if !ok {
@@ -98,7 +116,10 @@ func BenchmarkBuild(b *testing.B) {
 		b.Skip("unable to load dictionary file")
 	}
 	for i := 0; i < b.N; i++ {
-		Build(words)
+		_, err := Build(words)
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -152,7 +173,11 @@ func loadBenchTable() {
 		}
 	}
 	if len(words) > 0 {
-		benchTable = Build(words)
+		var err error
+		benchTable, err = Build(words)
+		if err != nil {
+			panic(err)
+		}
 	}
 }
 

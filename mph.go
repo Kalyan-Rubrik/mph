@@ -4,6 +4,7 @@ package mph
 import (
 	"bytes"
 	"encoding/gob"
+	"fmt"
 	"os"
 	"sort"
 )
@@ -20,7 +21,8 @@ type Table struct {
 
 // Build builds a Table from keys using the "Hash, displace, and compress"
 // algorithm described in http://cmph.sourceforge.net/papers/esa09.pdf.
-func Build(keys [][]byte) *Table {
+// Returns an error if duplicate keys are detected.
+func Build(keys [][]byte) (*Table, error) {
 	var (
 		level0        = make([]uint32, nextPow2(len(keys)/4))
 		level0Mask    = len(level0) - 1
@@ -45,7 +47,12 @@ func Build(keys [][]byte) *Table {
 	var tmpOcc []int
 	for _, bucket := range buckets {
 		var seed murmurSeed
+		remAttempts := len(level1)
 	trySeed:
+		if remAttempts == 0 {
+			return nil, fmt.Errorf("failed to find seed for bucket (likely duplicate keys detected)")
+		}
+		remAttempts--
 		tmpOcc = tmpOcc[:0]
 		for _, i := range bucket.vals {
 			n := int(seed.hash(keys[i])) & level1Mask
@@ -60,7 +67,7 @@ func Build(keys [][]byte) *Table {
 			tmpOcc = append(tmpOcc, n)
 			level1[n] = uint32(i)
 		}
-		level0[int(bucket.n)] = uint32(seed)
+		level0[bucket.n] = uint32(seed)
 	}
 
 	return &Table{
@@ -69,7 +76,7 @@ func Build(keys [][]byte) *Table {
 		level0Mask: level0Mask,
 		level1:     level1,
 		level1Mask: level1Mask,
-	}
+	}, nil
 }
 
 func nextPow2(n int) int {
