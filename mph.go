@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/gob"
 	"fmt"
+	"math"
 	"os"
 	"sort"
 )
@@ -47,10 +48,10 @@ func Build(keys [][]byte) (*Table, error) {
 	var tmpOcc []int
 	for _, bucket := range buckets {
 		var seed murmurSeed
-		remAttempts := len(level1)
+		remAttempts := math.MaxUint32
 	trySeed:
 		if remAttempts == 0 {
-			return nil, fmt.Errorf("failed to find seed for bucket (likely duplicate keys detected)")
+			return nil, fmt.Errorf("failed to find slots for bucket (likely due to duplicate keys)")
 		}
 		remAttempts--
 		tmpOcc = tmpOcc[:0]
