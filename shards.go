@@ -24,7 +24,8 @@ func (st *ShardedTable) Lookup(s []byte) (n uint32, ok bool) {
 	if st.tables[shardIdx] == nil {
 		return 0, false
 	}
-	return st.tables[shardIdx].Lookup(s)
+	suffix := keySuffix(s, st.suffixOnly, st.prefBits)
+	return st.tables[shardIdx].Lookup(suffix)
 }
 
 func (st *ShardedTable) GetCounts() []uint {
@@ -154,7 +155,7 @@ func keySuffix(key []byte, suffixOnly bool, prefBits int) []byte {
 		return key
 	}
 	numBytes, rem := prefComps(prefBits)
-	suffix := key[numBytes:]
+	suffix := append([]byte{}, key[numBytes:]...)
 	if rem > 0 && len(suffix) > 0 {
 		suffix[0] = key[numBytes] & (0xff >> rem)
 	}
