@@ -107,6 +107,13 @@ func (t *Table) DumpToFile(filePath string) error {
 		return err
 	}
 	encoder := gob.NewEncoder(dumpFile)
+	if err = t.encode(encoder); err != nil {
+		return err
+	}
+	return dumpFile.Close()
+}
+
+func (t *Table) encode(encoder *gob.Encoder) (err error) {
 	if err = encoder.Encode(t.keys); err != nil {
 		return err
 	}
@@ -122,7 +129,7 @@ func (t *Table) DumpToFile(filePath string) error {
 	if err = encoder.Encode(t.level1Mask); err != nil {
 		return err
 	}
-	return dumpFile.Close()
+	return
 }
 
 func LoadFromFile(filePath string) (*Table, error) {
@@ -131,8 +138,14 @@ func LoadFromFile(filePath string) (*Table, error) {
 		return nil, err
 	}
 	defer dumpFile.Close()
+
 	gobDecoder := gob.NewDecoder(dumpFile)
+	return decode(gobDecoder)
+}
+
+func decode(gobDecoder *gob.Decoder) (*Table, error) {
 	var t Table
+	var err error
 	if err = gobDecoder.Decode(&t.keys); err != nil {
 		return nil, err
 	}

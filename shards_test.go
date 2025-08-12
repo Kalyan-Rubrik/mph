@@ -68,6 +68,18 @@ func TestBuildShardedSuffixKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	const shardedDumpPath = "/tmp/sharded.mph"
+	err = st.DumpToFile(shardedDumpPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	st, err = LoadShardedTableFromFile(shardedDumpPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	numShards := len(st.tables)
 	if numShards != expNumShards {
 		t.Errorf("expected %d slots, got %d", expNumShards, numShards)
@@ -187,6 +199,18 @@ func TestBuildShardedFullKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	const shardedDumpPath = "/tmp/sharded.mph"
+	err = st.DumpToFile(shardedDumpPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	st, err = LoadShardedTableFromFile(shardedDumpPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	numShards := len(st.tables)
 	if numShards != expNumShards {
 		t.Errorf("expected %d slots, got %d", expNumShards, numShards)
