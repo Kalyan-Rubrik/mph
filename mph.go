@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/gob"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"sort"
@@ -13,6 +14,8 @@ import (
 // A Table is an immutable hash table that provides constant-time lookups of key
 // indices using a minimal perfect hash.
 type Table struct {
+	keysFile   *os.File
+	keyLen     int
 	keys       [][]byte
 	level0     []uint32 // power of 2 size
 	level0Mask int      // len(Level0) - 1
@@ -73,11 +76,131 @@ func Build(keys [][]byte) (*Table, error) {
 
 	return &Table{
 		keys:       keys,
+		keyLen:     len(keys),
 		level0:     level0,
 		level0Mask: level0Mask,
 		level1:     level1,
 		level1Mask: level1Mask,
 	}, nil
+}
+
+func BuildFromFile(keysFile *os.File, keyLen int) (*Table, error) {
+	keysFileStats, err := keysFile.Stat()
+	if err != nil {
+		return nil, err
+	}
+	keysFileLen := keysFileStats.Size()
+	if keysFileLen%int64(keyLen) != 0 {
+		return nil, fmt.Errorf(
+			"keys file length (%d) is not a multiple of key length (%d)",
+			keysFileLen,
+			keyLen,
+		)
+	}
+	numKeys := keysFileLen / int64(keyLen)
+
+	var (
+		level0        = make([]uint32, nextPow2(int(numKeys)/4))
+		level0Mask    = len(level0) - 1
+		level1        = make([]uint32, nextPow2(int(numKeys)))
+		level1Mask    = len(level1) - 1
+		sparseBuckets = make([][]int, len(level0))
+		zeroSeed      = murmurSeed(0)
+	)
+
+	for i := 0; ; i++ {
+		key := make([]byte, keyLen)
+		_, err = io.ReadFull(keysFile, key)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, err
+		}
+		n := int(zeroSeed.hash(key)) & level0Mask
+		sparseBuckets[n] = append(sparseBuckets[n], i)
+	}
+
+	_, err = keysFile.Seek(0, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	var buckets []indexBucket
+	for n, vals := range sparseBuckets {
+		if len(vals) > 0 {
+			buckets = append(buckets, indexBucket{n, vals})
+		}
+	}
+	sort.Sort(bySize(buckets))
+
+	occ := make([]bool, len(level1))
+	var tmpOcc []int
+	for _, bucket := range buckets {
+		bucketKeys := make(map[int][]byte, len(bucket.vals))
+		err = keysAtIndexes(keysFile, bucketKeys, keyLen, bucket.vals...)
+		if err != nil {
+			return nil, err
+		}
+		var seed murmurSeed
+		remAttempts := math.MaxUint32
+	trySeed:
+		if remAttempts == 0 {
+			return nil, fmt.Errorf("failed to find slots for bucket (likely due to duplicate keys)")
+		}
+		remAttempts--
+		tmpOcc = tmpOcc[:0]
+		for _, i := range bucket.vals {
+			n := int(seed.hash(bucketKeys[i])) & level1Mask
+			if occ[n] {
+				for _, n := range tmpOcc {
+					occ[n] = false
+				}
+				seed++
+				goto trySeed
+			}
+			occ[n] = true
+			tmpOcc = append(tmpOcc, n)
+			level1[n] = uint32(i)
+		}
+		level0[bucket.n] = uint32(seed)
+	}
+
+	return &Table{
+		keysFile:   keysFile,
+		keyLen:     keyLen,
+		level0:     level0,
+		level0Mask: level0Mask,
+		level1:     level1,
+		level1Mask: level1Mask,
+	}, nil
+}
+
+func keyAtIdx(keysFile *os.File, idx, keyLen int) ([]byte, error) {
+	if _, err := keysFile.Seek(int64(idx*keyLen), 0); err != nil {
+		return nil, err
+	}
+	key := make([]byte, keyLen)
+	if _, err := io.ReadFull(keysFile, key); err != nil {
+		return nil, err
+	}
+	return key, nil
+}
+
+func keysAtIndexes(
+	keysFile *os.File,
+	bucketKeys map[int][]byte,
+	keyLen int,
+	indexes ...int,
+) error {
+	for _, idx := range indexes {
+		key, err := keyAtIdx(keysFile, idx, keyLen)
+		if err != nil {
+			return err
+		}
+		bucketKeys[idx] = key
+	}
+	return nil
 }
 
 func nextPow2(n int) int {
@@ -90,6 +213,25 @@ func nextPow2(n int) int {
 
 // Lookup searches for s in t and returns its index and whether it was found.
 func (t *Table) Lookup(s []byte) (n uint32, ok bool) {
+	if t.keys != nil {
+		return t.lookupInMem(s)
+	}
+	return t.lookupFromFile(s)
+}
+
+func (t *Table) lookupFromFile(s []byte) (n uint32, ok bool) {
+	i0 := int(murmurSeed(0).hash(s)) & t.level0Mask
+	seed := t.level0[i0]
+	i1 := int(murmurSeed(seed).hash(s)) & t.level1Mask
+	n = t.level1[i1]
+	key, err := keyAtIdx(t.keysFile, int(n), t.keyLen)
+	if err != nil {
+		return 0, false
+	}
+	return n, bytes.Equal(s, key)
+}
+
+func (t *Table) lookupInMem(s []byte) (n uint32, ok bool) {
 	i0 := int(murmurSeed(0).hash(s)) & t.level0Mask
 	seed := t.level0[i0]
 	i1 := int(murmurSeed(seed).hash(s)) & t.level1Mask
@@ -114,7 +256,23 @@ func (t *Table) DumpToFile(filePath string) error {
 }
 
 func (t *Table) encode(encoder *gob.Encoder) (err error) {
-	if err = encoder.Encode(t.keys); err != nil {
+	if t.keys != nil {
+		if err = encoder.Encode(0); err != nil {
+			return err
+		}
+		if err = encoder.Encode(t.keys); err != nil {
+			return err
+		}
+	}
+	if t.keysFile != nil {
+		if err = encoder.Encode(1); err != nil {
+			return err
+		}
+		if err = encoder.Encode(t.keysFile.Name()); err != nil {
+			return err
+		}
+	}
+	if err = encoder.Encode(t.keyLen); err != nil {
 		return err
 	}
 	if err = encoder.Encode(t.level0); err != nil {
@@ -146,7 +304,26 @@ func LoadFromFile(filePath string) (*Table, error) {
 func decode(gobDecoder *gob.Decoder) (*Table, error) {
 	var t Table
 	var err error
-	if err = gobDecoder.Decode(&t.keys); err != nil {
+	var tag int
+	if err = gobDecoder.Decode(&tag); err != nil {
+		return nil, err
+	}
+	if tag == 0 {
+		if err = gobDecoder.Decode(&t.keys); err != nil {
+			return nil, err
+		}
+	}
+	if tag == 1 {
+		var keysFilePath string
+		if err = gobDecoder.Decode(&keysFilePath); err != nil {
+			return nil, err
+		}
+		t.keysFile, err = os.Open(keysFilePath)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err = gobDecoder.Decode(&t.keyLen); err != nil {
 		return nil, err
 	}
 	if err = gobDecoder.Decode(&t.level0); err != nil {

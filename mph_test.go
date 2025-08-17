@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestBuild_simple(t *testing.T) {
@@ -39,20 +40,24 @@ func TestBuild_stress(t *testing.T) {
 }
 
 func TestBuild(t *testing.T) {
-	keys := make([][]byte, 10_000_000)
+	const numKeys = 10_000_000
+	keys := make([][]byte, numKeys)
 	hasher := sha1.New()
 	for i := range keys {
 		hasher.Write([]byte("key" + strconv.Itoa(i)))
 		keys[i] = hasher.Sum(nil)
 	}
-	str := "hello"
 
+	start := time.Now()
 	tbl, err := Build(keys)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := tbl.Lookup([]byte(str)); ok {
-		t.Errorf("Lookup(%s): got ok; want !ok", str)
+	t.Logf("Build took %v sec", time.Since(start).Seconds())
+
+	const testKey = "hello"
+	if _, ok := tbl.Lookup([]byte(testKey)); ok {
+		t.Errorf("Lookup(%s): got ok; want !ok", testKey)
 	}
 
 	for i := range keys {
@@ -62,7 +67,68 @@ func TestBuild(t *testing.T) {
 	}
 
 	dumpFilePath := "/tmp/test.mph"
-	if err := tbl.DumpToFile(dumpFilePath); err != nil {
+	if err = tbl.DumpToFile(dumpFilePath); err != nil {
+		t.Fatal(err)
+	}
+
+	tbl, err = LoadFromFile(dumpFilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for i := range keys {
+		if _, ok := tbl.Lookup(keys[i]); !ok {
+			t.Errorf("Lookup(%s): got !ok; want ok", string(keys[i]))
+		}
+	}
+}
+
+func TestBuildFromFile(t *testing.T) {
+	const numKeys = 10_000_000
+	hasher := sha1.New()
+	keysFile, err := os.Create("/tmp/keys.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := make([][]byte, numKeys)
+	for i := 0; i < numKeys; i++ {
+		hasher.Write([]byte("key" + strconv.Itoa(numKeys)))
+		keys[i] = hasher.Sum(nil)
+		_, err = keysFile.Write(keys[i])
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	err = keysFile.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	keysFile, err = os.Open("/tmp/keys.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Now()
+	tbl, err := BuildFromFile(keysFile, sha1.Size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("BuildFromFile took %v sec", time.Since(start).Seconds())
+
+	const testKey = "hello"
+	if _, ok := tbl.Lookup([]byte(testKey)); ok {
+		t.Errorf("Lookup(%s): got ok; want !ok", testKey)
+	}
+
+	for i := range keys {
+		if _, ok := tbl.Lookup(keys[i]); !ok {
+			t.Errorf("Lookup(%s): got !ok; want ok", string(keys[i]))
+		}
+	}
+
+	dumpFilePath := "/tmp/test.mph"
+	if err = tbl.DumpToFile(dumpFilePath); err != nil {
 		t.Fatal(err)
 	}
 
