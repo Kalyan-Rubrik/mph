@@ -3,6 +3,7 @@ package mph
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/gob"
 	"fmt"
 	"io"
@@ -85,19 +86,10 @@ func Build(keys [][]byte) (*Table, error) {
 }
 
 func BuildFromFile(keysFile *os.File, keyLen int) (*Table, error) {
-	keysFileStats, err := keysFile.Stat()
+	numKeys, err := getNumKeys(keysFile, keyLen)
 	if err != nil {
 		return nil, err
 	}
-	keysFileLen := keysFileStats.Size()
-	if keysFileLen%int64(keyLen) != 0 {
-		return nil, fmt.Errorf(
-			"keys file length (%d) is not a multiple of key length (%d)",
-			keysFileLen,
-			keyLen,
-		)
-	}
-	numKeys := keysFileLen / int64(keyLen)
 
 	var (
 		level0        = make([]uint32, nextPow2(int(numKeys)/4))
@@ -176,6 +168,22 @@ func BuildFromFile(keysFile *os.File, keyLen int) (*Table, error) {
 	}, nil
 }
 
+func getNumKeys(keysFile *os.File, keyLen int) (int64, error) {
+	keysFileStats, err := keysFile.Stat()
+	if err != nil {
+		return 0, err
+	}
+	keysFileLen := keysFileStats.Size()
+	if keysFileLen%int64(keyLen) != 0 {
+		return 0, fmt.Errorf(
+			"keys file length (%d) is not a multiple of key length (%d)",
+			keysFileLen,
+			keyLen,
+		)
+	}
+	return keysFileLen / int64(keyLen), nil
+}
+
 func keyAtIdx(keysFile *os.File, idx, keyLen int) ([]byte, error) {
 	if _, err := keysFile.Seek(int64(idx*keyLen), 0); err != nil {
 		return nil, err
@@ -239,6 +247,51 @@ func (t *Table) lookupInMem(s []byte) (n uint32, ok bool) {
 	return n, bytes.Equal(s, t.keys[int(n)])
 }
 
+func (t *Table) DumpToKeysFile() error {
+	if t.keysFile == nil {
+		return fmt.Errorf("keys file not set")
+	}
+	numKeys, err := getNumKeys(t.keysFile, t.keyLen)
+	if err != nil {
+		return fmt.Errorf("error fetching key count: %v", err)
+	}
+	if err = t.keysFile.Close(); err != nil {
+		return err
+	}
+
+	t.keysFile, err = os.OpenFile(
+		t.keysFile.Name(),
+		os.O_WRONLY|os.O_APPEND,
+		0644,
+	)
+	if err != nil {
+		return err
+	}
+
+	encoder := gob.NewEncoder(t.keysFile)
+	if err = encoder.Encode(t.level0); err != nil {
+		return err
+	}
+	if err = encoder.Encode(t.level0Mask); err != nil {
+		return err
+	}
+	if err = encoder.Encode(t.level1); err != nil {
+		return err
+	}
+	if err = encoder.Encode(t.level1Mask); err != nil {
+		return err
+	}
+	err = binary.Write(t.keysFile, binary.LittleEndian, uint32(t.keyLen))
+	if err != nil {
+		return err
+	}
+	err = binary.Write(t.keysFile, binary.LittleEndian, uint32(numKeys))
+	if err != nil {
+		return err
+	}
+	return t.keysFile.Close()
+}
+
 func (t *Table) DumpToFile(filePath string) error {
 	dumpFile, err := os.OpenFile(
 		filePath,
@@ -288,6 +341,51 @@ func (t *Table) encode(encoder *gob.Encoder) (err error) {
 		return err
 	}
 	return
+}
+
+func LoadFromKeysFile(keysFile *os.File) (*Table, error) {
+	_, err := keysFile.Seek(-8, 2)
+	if err != nil {
+		return nil, err
+	}
+	buff := make([]byte, 8)
+	_, err = io.ReadFull(keysFile, buff)
+	if err != nil {
+		return nil, err
+	}
+
+	var numKeys, keyLen uint32
+	_, err = binary.Decode(buff[4:], binary.LittleEndian, &numKeys)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = binary.Decode(buff[:4], binary.LittleEndian, &keyLen)
+	if err != nil {
+		return nil, err
+	}
+
+	t := Table{keysFile: keysFile, keyLen: int(keyLen)}
+	_, err = keysFile.Seek(int64(numKeys)*int64(t.keyLen), 0)
+	if err != nil {
+		return nil, err
+	}
+
+	gobDecoder := gob.NewDecoder(keysFile)
+	if err = gobDecoder.Decode(&t.level0); err != nil {
+		return nil, err
+	}
+	if err = gobDecoder.Decode(&t.level0Mask); err != nil {
+		return nil, err
+	}
+	if err = gobDecoder.Decode(&t.level1); err != nil {
+		return nil, err
+	}
+	if err = gobDecoder.Decode(&t.level1Mask); err != nil {
+		return nil, err
+	}
+
+	return &t, nil
 }
 
 func LoadFromFile(filePath string) (*Table, error) {

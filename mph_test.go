@@ -84,9 +84,12 @@ func TestBuild(t *testing.T) {
 }
 
 func TestBuildFromFile(t *testing.T) {
-	const numKeys = 10_000_000
+	const (
+		numKeys      = 10_000_000
+		keysFilePath = "/tmp/keys.bin"
+	)
 	hasher := sha1.New()
-	keysFile, err := os.Create("/tmp/keys.bin")
+	keysFile, err := os.Create(keysFilePath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +107,7 @@ func TestBuildFromFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	keysFile, err = os.Open("/tmp/keys.bin")
+	keysFile, err = os.Open(keysFilePath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,12 +130,16 @@ func TestBuildFromFile(t *testing.T) {
 		}
 	}
 
-	dumpFilePath := "/tmp/test.mph"
-	if err = tbl.DumpToFile(dumpFilePath); err != nil {
+	if err = tbl.DumpToKeysFile(); err != nil {
 		t.Fatal(err)
 	}
 
-	tbl, err = LoadFromFile(dumpFilePath)
+	keysFile, err = os.Open(keysFilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tbl, err = LoadFromKeysFile(keysFile)
 	if err != nil {
 		t.Fatal(err)
 	}
