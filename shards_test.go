@@ -27,7 +27,10 @@ func TestBuildShardedSuffixKeys(t *testing.T) {
 	defer os.RemoveAll(mphDir)
 
 	keyLen := len(keys[0])
-	st := NewShardedTable(keyLen, prefBits, true, mphDir)
+	st, err := NewShardedTable(keyLen, prefBits, true, mphDir)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	for _, key := range keys {
 		err = st.Put(key)
@@ -127,7 +130,10 @@ func TestBuildShardedFullKeys(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	keyLen := len(keys[0])
-	st := NewShardedTable(keyLen, prefBits, false, tmpDir)
+	st, err := NewShardedTable(keyLen, prefBits, false, tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	for _, key := range keys {
 		err = st.Put(key)

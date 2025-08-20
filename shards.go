@@ -25,7 +25,13 @@ func NewShardedTable(
 	keyLen, prefBits int,
 	suffixOnly bool,
 	mphDirPath string,
-) *ShardedTable {
+) (*ShardedTable, error) {
+	if prefBits < 1 {
+		return nil, fmt.Errorf("prefixBits must be >= 1")
+	}
+	if prefBits > 32 {
+		return nil, fmt.Errorf("prefixBits must be <= 32 (memory constraints)")
+	}
 	tabFiles := make([]*os.File, 1<<prefBits)
 	counts := make([]uint, 1<<prefBits)
 	return &ShardedTable{
@@ -35,7 +41,7 @@ func NewShardedTable(
 		mphDirPath: mphDirPath,
 		tabFiles:   tabFiles,
 		counts:     counts,
-	}
+	}, nil
 }
 
 func (st *ShardedTable) Put(key []byte) error {

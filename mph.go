@@ -129,7 +129,7 @@ func BuildFromFile(keysFile *os.File, keyLen int) (*Table, error) {
 	occ := make([]bool, len(level1))
 	var tmpOcc []int
 	for _, bucket := range buckets {
-		bucketKeys := make(map[int][]byte, len(bucket.vals))
+		bucketKeys := make([][]byte, len(bucket.vals))
 		err = keysAtIndexes(keysFile, bucketKeys, keyLen, bucket.vals...)
 		if err != nil {
 			return nil, err
@@ -142,8 +142,8 @@ func BuildFromFile(keysFile *os.File, keyLen int) (*Table, error) {
 		}
 		remAttempts--
 		tmpOcc = tmpOcc[:0]
-		for _, i := range bucket.vals {
-			n := int(seed.hash(bucketKeys[i])) & level1Mask
+		for idx, i := range bucket.vals {
+			n := int(seed.hash(bucketKeys[idx])) & level1Mask
 			if occ[n] {
 				for _, n := range tmpOcc {
 					occ[n] = false
@@ -197,16 +197,16 @@ func keyAtIdx(keysFile *os.File, idx, keyLen int) ([]byte, error) {
 
 func keysAtIndexes(
 	keysFile *os.File,
-	bucketKeys map[int][]byte,
+	bucketKeys [][]byte,
 	keyLen int,
 	indexes ...int,
 ) error {
-	for _, idx := range indexes {
+	for i, idx := range indexes {
 		key, err := keyAtIdx(keysFile, idx, keyLen)
 		if err != nil {
 			return err
 		}
-		bucketKeys[idx] = key
+		bucketKeys[i] = key
 	}
 	return nil
 }
