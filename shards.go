@@ -1,6 +1,7 @@
 package mph
 
 import (
+	"bufio"
 	"encoding/gob"
 	"fmt"
 	"os"
@@ -10,20 +11,42 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+type tabFile struct {
+	*os.File
+	buff *bufio.Writer
+}
+
+func newTabFile(tFile *os.File, buffSzBts int) *tabFile {
+	return &tabFile{
+		File: tFile,
+		buff: bufio.NewWriterSize(tFile, buffSzBts),
+	}
+}
+
+func (tf *tabFile) Write(p []byte) (n int, err error) {
+	return tf.buff.Write(p)
+}
+
+func (tf *tabFile) Close() error {
+	if err := tf.buff.Flush(); err != nil {
+		return err
+	}
+	return tf.File.Close()
+}
+
 type ShardedTable struct {
 	counts       []uint
 	prefBits     int
 	keyLen       int
-	suffixOnly   bool
+	buffSzBts    int
 	mphDirPath   string
 	tables       []*Table
-	tabFiles     []*os.File
+	tabFiles     []*tabFile
 	tabFilePaths []string
 }
 
 func NewShardedTable(
-	keyLen, prefBits int,
-	suffixOnly bool,
+	keyLen, prefBits, buffSzBts int,
 	mphDirPath string,
 ) (*ShardedTable, error) {
 	if prefBits < 1 {
@@ -32,12 +55,12 @@ func NewShardedTable(
 	if prefBits > 32 {
 		return nil, fmt.Errorf("prefixBits must be <= 32 (memory constraints)")
 	}
-	tabFiles := make([]*os.File, 1<<prefBits)
+	tabFiles := make([]*tabFile, 1<<prefBits)
 	counts := make([]uint, 1<<prefBits)
 	return &ShardedTable{
 		keyLen:     keyLen,
+		buffSzBts:  buffSzBts,
 		prefBits:   prefBits,
-		suffixOnly: suffixOnly,
 		mphDirPath: mphDirPath,
 		tabFiles:   tabFiles,
 		counts:     counts,
@@ -54,7 +77,7 @@ func (st *ShardedTable) Put(key []byte) error {
 	}
 	if st.tabFiles[shardIdx] == nil {
 		tabFilePath := path.Join(st.mphDirPath, fmt.Sprintf("%d.bin", shardIdx))
-		tabFile, err := os.OpenFile(
+		tblFile, err := os.OpenFile(
 			tabFilePath,
 			os.O_WRONLY|os.O_CREATE|os.O_TRUNC,
 			0644,
@@ -62,10 +85,9 @@ func (st *ShardedTable) Put(key []byte) error {
 		if err != nil {
 			return fmt.Errorf("failed to open table file %s: %v", tabFilePath, err)
 		}
-		st.tabFiles[shardIdx] = tabFile
+		st.tabFiles[shardIdx] = newTabFile(tblFile, st.buffSzBts)
 	}
-	suffix := keySuffix(key, st.suffixOnly, st.prefBits)
-	if _, err = st.tabFiles[shardIdx].Write(suffix); err != nil {
+	if _, err = st.tabFiles[shardIdx].Write(key); err != nil {
 		return err
 	}
 	st.counts[shardIdx]++
@@ -76,23 +98,23 @@ func (st *ShardedTable) Commit(grp *errgroup.Group) error {
 	mu := &sync.Mutex{}
 	st.tables = make([]*Table, len(st.tabFiles))
 	st.tabFilePaths = make([]string, len(st.tabFiles))
-	for i, tabFile := range st.tabFiles {
-		if tabFile == nil {
+	for i, tblFile := range st.tabFiles {
+		if tblFile == nil {
 			continue
 		}
-		st.tabFilePaths[i] = tabFile.Name()
+		st.tabFilePaths[i] = tblFile.Name()
 		idx := i
-		keyFile := tabFile
+		keyFile := tblFile
 		commitFn := func() error {
 			err := keyFile.Close()
 			if err != nil {
 				return err
 			}
-			keyFile, err = os.Open(keyFile.Name())
+			tFile, err := os.Open(keyFile.Name())
 			if err != nil {
 				return err
 			}
-			table, err := BuildFromFile(keyFile, st.keyLen)
+			table, err := BuildFromFile(tFile, st.keyLen)
 			if err != nil {
 				return err
 			}
@@ -127,8 +149,7 @@ func (st *ShardedTable) Lookup(s []byte) (n uint32, ok bool) {
 	if st.tables[shardIdx] == nil {
 		return 0, false
 	}
-	suffix := keySuffix(s, st.suffixOnly, st.prefBits)
-	return st.tables[shardIdx].Lookup(suffix)
+	return st.tables[shardIdx].Lookup(s)
 }
 
 func (st *ShardedTable) GetCounts() []uint {
@@ -152,9 +173,6 @@ func (st *ShardedTable) DumpToFile(filePath string) error {
 		return err
 	}
 	if err = encoder.Encode(st.keyLen); err != nil {
-		return err
-	}
-	if err = encoder.Encode(st.suffixOnly); err != nil {
 		return err
 	}
 	if err = encoder.Encode(st.mphDirPath); err != nil {
@@ -192,9 +210,6 @@ func LoadShardedTableFromFile(filePath string) (*ShardedTable, error) {
 	if err = gobDecoder.Decode(&st.keyLen); err != nil {
 		return nil, err
 	}
-	if err = gobDecoder.Decode(&st.suffixOnly); err != nil {
-		return nil, err
-	}
 	if err = gobDecoder.Decode(&st.mphDirPath); err != nil {
 		return nil, err
 	}
@@ -202,16 +217,15 @@ func LoadShardedTableFromFile(filePath string) (*ShardedTable, error) {
 		return nil, err
 	}
 	st.tables = make([]*Table, len(st.counts))
-	st.tabFiles = make([]*os.File, len(st.counts))
 	for i, cnt := range st.counts {
 		if cnt == 0 {
 			continue
 		}
-		st.tabFiles[i], err = os.Open(st.tabFilePaths[i])
+		tblFile, err := os.Open(st.tabFilePaths[i])
 		if err != nil {
 			return nil, err
 		}
-		st.tables[i], err = LoadFromKeysFile(st.tabFiles[i])
+		st.tables[i], err = LoadFromKeysFile(tblFile)
 		if err != nil {
 			return nil, err
 		}
@@ -219,20 +233,8 @@ func LoadShardedTableFromFile(filePath string) (*ShardedTable, error) {
 	return &st, nil
 }
 
-func keySuffix(key []byte, suffixOnly bool, prefBits int) []byte {
-	if !suffixOnly {
-		return key
-	}
-	numBytes, rem := prefComps(prefBits)
-	suffix := append([]byte{}, key[numBytes:]...)
-	if rem > 0 && len(suffix) > 0 {
-		suffix[0] = key[numBytes] & (0xff >> rem)
-	}
-	return suffix
-}
-
 func shardIndex(key []byte, prefBits int) (uint64, error) {
-	numBytes, rem := prefComps(prefBits)
+	numBytes, rem := prefBits>>3, prefBits&7
 	if len(key) < numBytes || (rem > 0 && len(key) <= numBytes) {
 		return 0, fmt.Errorf("key too short for %d-bit prefix", prefBits)
 	}
@@ -245,10 +247,4 @@ func shardIndex(key []byte, prefBits int) (uint64, error) {
 		shardIdx |= uint64(remainingBits) << (8 * numBytes)
 	}
 	return shardIdx, nil
-}
-
-func prefComps(prefBits int) (int, int) {
-	numBytes := prefBits >> 3
-	rem := prefBits & 7
-	return numBytes, rem
 }

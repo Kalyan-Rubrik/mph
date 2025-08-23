@@ -97,8 +97,7 @@ func TestBuildFromFile(t *testing.T) {
 	for i := 0; i < numKeys; i++ {
 		hasher.Write([]byte("key" + strconv.Itoa(numKeys)))
 		keys[i] = hasher.Sum(nil)
-		_, err = keysFile.Write(keys[i])
-		if err != nil {
+		if _, err = keysFile.Write(keys[i]); err != nil {
 			t.Fatal(err)
 		}
 	}
