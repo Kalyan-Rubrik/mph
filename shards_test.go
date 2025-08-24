@@ -75,7 +75,7 @@ func TestBuildShardedOnLargeDataset(t *testing.T) {
 		prefBits        = 16
 		mphDir          = "/tmp/mph_test"
 		shardedFilePath = "/tmp/sharded.mph"
-		buffSzBts       = 1024 * 1024
+		buffSzBts       = 65536 * 1024
 	)
 	err := os.MkdirAll(mphDir, 0755)
 	if err != nil {

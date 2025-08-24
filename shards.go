@@ -16,10 +16,10 @@ type tabFile struct {
 	buff *bufio.Writer
 }
 
-func newTabFile(tFile *os.File, buffSzBts int) *tabFile {
+func newTabFile(tFile *os.File, buffSzBytes int) *tabFile {
 	return &tabFile{
 		File: tFile,
-		buff: bufio.NewWriterSize(tFile, buffSzBts),
+		buff: bufio.NewWriterSize(tFile, buffSzBytes),
 	}
 }
 
@@ -38,7 +38,7 @@ type ShardedTable struct {
 	counts       []uint
 	prefBits     int
 	keyLen       int
-	buffSzBts    int
+	buffSzBytes  int
 	mphDirPath   string
 	tables       []*Table
 	tabFiles     []*tabFile
@@ -46,7 +46,7 @@ type ShardedTable struct {
 }
 
 func NewShardedTable(
-	keyLen, prefBits, buffSzBts int,
+	keyLen, prefBits, buffSzBytes int,
 	mphDirPath string,
 ) (*ShardedTable, error) {
 	if prefBits < 1 {
@@ -55,15 +55,16 @@ func NewShardedTable(
 	if prefBits > 32 {
 		return nil, fmt.Errorf("prefixBits must be <= 32 (memory constraints)")
 	}
-	tabFiles := make([]*tabFile, 1<<prefBits)
-	counts := make([]uint, 1<<prefBits)
+	numTabs := 1 << prefBits
+	tabFiles := make([]*tabFile, numTabs)
+	counts := make([]uint, numTabs)
 	return &ShardedTable{
-		keyLen:     keyLen,
-		buffSzBts:  buffSzBts,
-		prefBits:   prefBits,
-		mphDirPath: mphDirPath,
-		tabFiles:   tabFiles,
-		counts:     counts,
+		keyLen:      keyLen,
+		buffSzBytes: buffSzBytes / numTabs,
+		prefBits:    prefBits,
+		mphDirPath:  mphDirPath,
+		tabFiles:    tabFiles,
+		counts:      counts,
 	}, nil
 }
 
@@ -85,7 +86,7 @@ func (st *ShardedTable) Put(key []byte) error {
 		if err != nil {
 			return fmt.Errorf("failed to open table file %s: %v", tabFilePath, err)
 		}
-		st.tabFiles[shardIdx] = newTabFile(tblFile, st.buffSzBts)
+		st.tabFiles[shardIdx] = newTabFile(tblFile, st.buffSzBytes)
 	}
 	if _, err = st.tabFiles[shardIdx].Write(key); err != nil {
 		return err
